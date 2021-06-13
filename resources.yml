@@ -93,7 +93,7 @@ Resources:
 
   VideoProcessingBucket:
     Type: AWS::S3::Bucket
-    BucketName: gifmaker-gifs
+    BucketName: gifmaker-video-processing
     LifecycleConfiguration:
       Rules:
         - Id: ExpireRule
@@ -104,13 +104,13 @@ Resources:
 
   BackendBucket:
     Type: AWS::S3::Bucket
-    BucketName: gifmaker-gifs
+    BucketName: gifmaker-backend
     VersioningConfiguration:
       Status: Disabled
 
   FrontendBucket:
     Type: AWS::S3::Bucket
-    BucketName: gifmaker-gifs
+    BucketName: gifmaker-website
     VersioningConfiguration:
       Status: Enabled
     WebsiteConfiguration:
