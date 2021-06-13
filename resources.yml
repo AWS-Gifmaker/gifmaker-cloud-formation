@@ -109,6 +109,7 @@ Resources:
       Status: Disabled
 
   FrontendBucket:
+    Type: AWS::S3::Bucket
     BucketName: gifmaker-gifs
     VersioningConfiguration:
       Status: Enabled
