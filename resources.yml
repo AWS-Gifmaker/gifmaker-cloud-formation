@@ -1,0 +1,299 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Gifmaker Resources Template
+
+#Parameters:
+
+Resources:
+  ### ROLES
+
+  GifBucketReplicaitonRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: GifBucketReplicaitonRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  GifmakerImageLambdaExcecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: GifmakerImageLambdaExcecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonRekognitionFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMFullAccess
+
+  GifmakerBackendServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: GifmakerBackendServiceRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  ### BUCKETS
+
+  GifBucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - GifBackupsBucket
+    BucketName: gifmaker-gifs
+    LifecycleConfiguration:
+      Rules:
+        - Id: InteligentTieringRule
+          Status: Enabled
+          Transitions:
+            - TransitionInDays: 30
+              StorageClass: INTELLIGENT_TIERING
+    ReplicationConfiguration:
+      Role: !GetAtt GifBucketReplicaitonRole.Arn
+      Rules:
+        - Id: BackupGifsRule
+          Status: Enabled
+          Destination:
+            Bucket: !GetAtt GifBackupsBucket.Arn
+            StorageClass: GLACIER
+    VersioningConfiguration:
+      Status: Enabled
+
+  GifBackupsBucket:
+    Type: AWS::S3::Bucket
+    BucketName: gifmaker-gifs-backup
+    VersioningConfiguration:
+      Status: Enabled
+
+  VideoProcessingBucket:
+    Type: AWS::S3::Bucket
+    BucketName: gifmaker-gifs
+    LifecycleConfiguration:
+      Rules:
+        - Id: ExpireRule
+          Status: Enabled
+          ExpirationInDays: 1
+    VersioningConfiguration:
+      Status: Disabled
+
+  BackendBucket:
+    Type: AWS::S3::Bucket
+    BucketName: gifmaker-gifs
+    VersioningConfiguration:
+      Status: Disabled
+
+  FrontendBucket:
+    BucketName: gifmaker-gifs
+    VersioningConfiguration:
+      Status: Enabled
+    WebsiteConfiguration:
+      IndexDocument: index.html
+
+  ### LAMBDAS
+
+  CreateImageTagsLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CreateImageTagsRepository
+    FunctionName: create-image-tags
+    Code:
+      ImageUri: !GetAtt CreateImageTagsRepository.RepositoryUri
+    MemorySize: 512
+    PackageType: Image
+    Role: !GetAtt GifmakerImageLambdaExcecutionRole.Arn
+    Timeout: 60
+
+  VidToGifLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - VidToGifRepository
+    FunctionName: vid-to-gif
+    Code:
+      ImageUri: !GetAtt VidToGifRepository.RepositoryUri
+    MemorySize: 512
+    PackageType: Image
+    Role: !GetAtt GifmakerImageLambdaExcecutionRole.Arn
+    Timeout: 60
+
+  GifmakerBackendLambda:
+    Type: AWS::Lambda::Function
+    FunctionName: gifmaker-backend
+    Code:
+      S3Bucket:
+    Handler: main.handler
+    MemorySize: 256
+    PackageType: Zip
+    Role: !GetAtt GifmakerBackendServiceRole.Arn
+    Runtime: python3.8
+    Timeout: 10
+
+  ### DYNAMODB
+
+  GifsTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "key"
+          AttributeType: "S"
+        - AttributeName: "visits"
+          AttributeType: "N"
+        - AttributeName: "name"
+          AttributeType: "S"
+        - AttributeName: "image_url"
+          AttributeType: "S"
+        - AttributeName: "tags"
+          AttributeType: "S"
+        - AttributeName: "ready"
+          AttributeType: "B"
+      KeySchema:
+        - AttributeName: "key"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: "gifs"
+
+  TopResultsTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "key"
+          AttributeType: "S"
+        - AttributeName: "ranking"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "key"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: "top-results"
+
+  ### API GATEWAY
+
+  GifmakerApiGateway:
+    Type: 'AWS::ApiGatewayV2::Api'
+    Properties:
+      Name: Gifmaker API Gateway
+      ProtocolType: HTTP
+
+  DevDeployment:
+    Type: 'AWS::ApiGatewayV2::Deployment'
+    DependsOn:
+      - GifmakerApiGateway
+    Properties:
+      Description: Development Deployment
+      ApiId: !Ref GifmakerApiGateway
+      StageName: dev
+
+  ProdDeployment:
+    Type: 'AWS::ApiGatewayV2::Deployment'
+    DependsOn:
+      - GifmakerApiGateway
+    Properties:
+      Description: Development Deployment
+      ApiId: !Ref GifmakerApiGateway
+      StageName: prod
+
+  DevStage:
+    Type: 'AWS::ApiGatewayV2::Stage'
+    Properties:
+      StageName: dev
+      Description: Dev Stage
+      DeploymentId: !Ref DevDeployment
+      ApiId: !Ref GifmakerApiGateway
+
+  ProdStage:
+    Type: 'AWS::ApiGatewayV2::Stage'
+    Properties:
+      StageName: prod
+      Description: Prod Stage
+      DeploymentId: !Ref ProdDeployment
+      ApiId: !Ref GifmakerApiGateway
+
+  ### ECR REGISTRY
+
+  CreateImageTagsRepository:
+    Type: 'AWS::ECR::Repository'
+    Properties:
+      RepositoryName: gif-maker-create-image-tags
+
+  VidToGifRepository:
+    Type: 'AWS::ECR::Repository'
+    Properties:
+      RepositoryName: gif-maker-vid-to-gif
+
+  ### SSM PARAMETERS
+
+  BackendUrlParameter:
+    Type: 'AWS::SSM::Parameter'
+    DepensOn:
+      - GifmakerApiGateway
+      - ProdStage
+    Properties:
+      Name: backend_url
+      Type: String
+      Value: !Join
+        - ''
+        - - !GetAtt
+            - GifmakerApiGateway
+            - ApiEndpoint
+          - !GetAtt
+            - ProdStage
+            - StageName
+
+  CreateImageTagsMaxFramesUsedParameter:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: create-image-tags-max-frames-used
+      Type: String
+      Value: 2
+
+  VidToGifFramesUsedParameter:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: vid-to-gif-video-frames-used
+      Type: String
+      Value: 60
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt
+      - FrontendBucket
+      - WebsiteURL
+    Description: URL for website hosted on S3
+
+  S3BucketSecureURL:
+    Value: !Join
+      - ''
+      - - 'https://'
+        - !GetAtt
+          - FrontendBucket
+          - DomainName
+    Description: Name of S3 bucket to hold website content

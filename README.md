@@ -1,2 +1,1 @@
-# gifmaker-cloud-formation
-# gifmaker-cloud-formation
+# Gifmaker Cloud Formation Templates
